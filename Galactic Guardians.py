@@ -1,48 +1,35 @@
 import pygame
 from pygame.locals import *
 from OpenGL.GL import *
-from OpenGL.GLUT import *
 from OpenGL.GLU import *
-import math
 import hashlib
 import socket
 import threading
 from cryptography.fernet import Fernet
 import argparse
+import time
+import random
 
 # Constants
 XMAX, YMAX = 1200, 700
-SPACESHIP_SPEED = 20
+SPACESHIP_SPEED = 5
+LASER_SPEED = 10
+ALIEN_SPEED = 2
 SERVER_PORT = 12345
 ENCRYPTION_KEY = Fernet.generate_key()
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
 # Initial game state
-viewPage = "INTRO"
-keyStates = {chr(i): False for i in range(256)}
-direction = [False] * 4
-laser1Dir, laser2Dir = [False, False], [False, False]
-alienLife1, alienLife2 = 100, 100
-gameOver = False
-xOne, yOne, xTwo, yTwo = 500, 0, 500, 0
-laser1, laser2 = False, False
-CI = 0
-mButtonPressed = False
-mouseX, mouseY = 0, 0
-
-# Game assets (simplified for brevity)
-LightColor = [(1, 1, 0), (0, 1, 1), (0, 1, 0)]
-AlienBody = [(-4, 9), (-6, 0), (0, 0), (0.5, 9), (0.15, 12), (-14, 18), (-19, 10), (-20, 0), (-6, 0)]
-AlienCollar = [(-9, 10.5), (-6, 11), (-5, 12), (6, 18), (10, 20), (13, 23), (16, 30), (19, 39), (16, 38),
-               (10, 37), (-13, 39), (-18, 41), (-20, 43), (-20.5, 42), (-21, 30), (-19.5, 23), (-19, 20),
-               (-14, 16), (-15, 17), (-13, 13), (-9, 10.5)]
-AlienFace = [(-6, 11), (-4.5, 18), (0.5, 20), (0, 20.5), (0.1, 19.5), (1.8, 19), (5, 20), (7, 23), (9, 29),
-             (6, 29.5), (5, 28), (7, 30), (10, 38), (11, 38), (11, 40), (11.5, 48), (10, 50.5), (8.5, 51), 
-             (6, 52), (1, 51), (-3, 50), (-1, 51), (-3, 52), (-5, 52.5), (-6, 52), (-9, 51), (-10.5, 50), 
-             (-12, 49), (-12.5, 47), (-12, 43), (-13, 40), (-12, 38.5), (-13.5, 33), (-15, 38), (-14.5, 32), 
-             (-14, 28), (-13.5, 33), (-14, 28), (-13.8, 24), (-13, 20), (-11, 19), (-10.5, 12), (-6, 11)]
-AlienBeak = [(-6, 21.5), (-6.5, 22), (-9, 21), (-11, 20.5), (-20, 20), (-14, 23), (-9.5, 28), (-7, 27), 
-             (-6, 26.5), (-4.5, 23), (-4, 21), (-6, 19.5), (-8.5, 19), (-10, 19.5), (-11, 20.5)]
+viewPage = "START"
+xOne, yOne = -400, -300
+xTwo, yTwo = 400, -300
+lasers = []
+alien_positions = []
+alien_spawn_timer = 0
+alien_spawn_interval = 2000  # in milliseconds
+key_states = {K_w: False, K_s: False, K_a: False, K_d: False, K_UP: False, K_DOWN: False, K_LEFT: False, K_RIGHT: False}
+scores = {"Player 1": 0, "Player 2": 0}
+game_over = False
 
 # Blockchain Implementation
 class Block:
@@ -83,13 +70,19 @@ def log_event(event_data):
 # Network Communication
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind(('', SERVER_PORT))
     server_socket.listen(5)
     print("Server started, waiting for connections...")
-    while True:
+    server_socket.settimeout(10)
+    try:
         client_socket, addr = server_socket.accept()
+        client_socket.settimeout(60)
         print(f"Connection from {addr}")
         threading.Thread(target=handle_client, args=(client_socket,)).start()
+    except socket.timeout:
+        print("No client connected within 10 seconds, starting game in single-player mode.")
+        game_loop(None)
 
 def handle_client(client_socket):
     while True:
@@ -99,86 +92,304 @@ def handle_client(client_socket):
                 break
             decrypted_data = cipher_suite.decrypt(data).decode('utf-8')
             print(f"Received: {decrypted_data}")
-        except:
+        except socket.timeout:
+            print("Connection timed out. Closing client socket.")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
             break
     client_socket.close()
 
 def connect_to_server(server_ip):
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect((server_ip, SERVER_PORT))
+    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    client_socket.settimeout(60)
+    try:
+        client_socket.connect((server_ip, SERVER_PORT))
+    except socket.error as e:
+        print(f"Could not connect to server: {e}")
+        return None
     return client_socket
 
-# Display text on screen
-def display_text(x, y, text, size=24, color=(255, 255, 255)):
-    font = pygame.font.SysFont("Arial", size)
-    surface = font.render(text, True, color)
-    screen.blit(surface, (x, y))
+# Pygame and OpenGL Setup
+def setup_pygame():
+    pygame.init()
+    screen = pygame.display.set_mode((XMAX, YMAX), DOUBLEBUF | OPENGL)
+    pygame.display.set_caption("Galactic Guardians")
+    glClearColor(0.0, 0.0, 0.0, 1.0)  # Set background color to black
+    gluOrtho2D(-XMAX // 2, XMAX // 2, -YMAX // 2, YMAX // 2)
+    return screen
 
-# Draw alien
-def draw_alien(isPlayer1):
-    glColor3f(0, 1, 0) if isPlayer1 else glColor3f(1, 1, 0)
-    glBegin(GL_POLYGON)
-    for vertex in AlienBody:
-        glVertex2fv(vertex)
-    glEnd()
-    glColor3f(0, 0, 0)
-    glBegin(GL_LINE_STRIP)
-    for vertex in AlienBody:
-        glVertex2fv(vertex)
+# Draw Stars Background
+def draw_stars():
+    glPointSize(2)
+    glBegin(GL_POINTS)
+    glColor3f(1, 1, 1)
+    for _ in range(100):
+        glVertex2f(random.randint(-XMAX // 2, XMAX // 2), random.randint(-YMAX // 2, YMAX // 2))
     glEnd()
 
+# Draw Spaceship
 def draw_spaceship(x, y, isPlayer1):
     glPushMatrix()
     glTranslatef(x, y, 0)
-    draw_alien(isPlayer1)
+    if isPlayer1:
+        glColor3f(0, 1, 0)  # Green for Player 1
+    else:
+        glColor3f(1, 1, 0)  # Yellow for Player 2
+
+    # Draw body of the spaceship
+    glBegin(GL_TRIANGLES)
+    glVertex2f(0, 30)  # Top point of the triangle
+    glVertex2f(-20, -20)  # Bottom left point of the triangle
+    glVertex2f(20, -20)  # Bottom right point of the triangle
+    glEnd()
+
+    # Draw wings
+    glBegin(GL_QUADS)
+    glVertex2f(-25, -10)
+    glVertex2f(-15, -10)
+    glVertex2f(-15, -30)
+    glVertex2f(-25, -30)
+
+    glVertex2f(15, -10)
+    glVertex2f(25, -10)
+    glVertex2f(25, -30)
+    glVertex2f(15, -30)
+    glEnd()
+
+    # Draw cockpit
+    glColor3f(0.5, 0.5, 0.5)
+    glBegin(GL_QUADS)
+    glVertex2f(-5, 0)
+    glVertex2f(5, 0)
+    glVertex2f(5, -10)
+    glVertex2f(-5, -10)
+    glEnd()
+
     glPopMatrix()
 
-def display():
-    global alienLife1, alienLife2
-    glClear(GL_COLOR_BUFFER_BIT)
-    if viewPage == "GAME":
-        draw_spaceship(xOne, yOne, True)
-        draw_spaceship(xTwo, yTwo, False)
-        if laser1:
-            log_event("Player 1 fired a laser")
-        if laser2:
-            log_event("Player 2 fired a laser")
+# Draw Laser
+def draw_lasers():
+    global lasers
+    glColor3f(1, 0, 0)
+    glBegin(GL_LINES)
+    for laser in lasers:
+        x, y = laser
+        glVertex2f(x, y)
+        glVertex2f(x, y + 20)
+    glEnd()
+
+# Draw Aliens
+def draw_aliens():
+    global alien_positions
+    glColor3f(1, 0, 1)  # Magenta for aliens
+    for alien in alien_positions:
+        x, y = alien
+        glPushMatrix()
+        glTranslatef(x, y, 0)
+        glBegin(GL_TRIANGLES)
+        glVertex2f(0, 20)
+        glVertex2f(-15, -15)
+        glVertex2f(15, -15)
+        glEnd()
+        glPopMatrix()
+
+# Draw Score
+def draw_score():
+    pygame.font.init()
+    font = pygame.font.SysFont('Arial', 20)
+    score_text = f"Player 1: {scores['Player 1']}  Player 2: {scores['Player 2']}"
+    text_surface = font.render(score_text, True, (255, 255, 255))
+    text_data = pygame.image.tostring(text_surface, "RGBA", True)
+    glWindowPos2d(-XMAX // 2 + 10, YMAX // 2 - 30)
+    glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+
+# Draw Start Page
+def draw_start_page():
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    pygame.font.init()
+    font = pygame.font.SysFont('Arial', 50)
+    text_surface = font.render("Press ENTER to Start", True, (255, 255, 255))
+    text_data = pygame.image.tostring(text_surface, "RGBA", True)
+    glWindowPos2d(-text_surface.get_width() // 2, 0)
+    glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
     pygame.display.flip()
 
-def main(args):
-    global viewPage, keyStates, mButtonPressed, mouseX, mouseY
+# Draw Game Over Page
+def draw_game_over_page():
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    pygame.font.init()
+    font = pygame.font.SysFont('Arial', 50)
+    text_surface = font.render(f"Game Over! Player 1: {scores['Player 1']}  Player 2: {scores['Player 2']}  Press R to Restart", True, (255, 0, 0))
+    text_data = pygame.image.tostring(text_surface, "RGBA", True)
+    glWindowPos2d(XMAX // 2 - text_surface.get_width() // 2, YMAX // 2 - text_surface.get_height() // 2)
+    glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+    pygame.display.flip()
 
+# Display Function
+def display(screen):
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    if viewPage == "START":
+        draw_start_page()
+    elif viewPage == "GAME":
+        draw_stars()
+        draw_spaceship(xOne, yOne, True)
+        draw_spaceship(xTwo, yTwo, False)
+        draw_lasers()
+        draw_aliens()
+        draw_score()
+    elif viewPage == "GAME_OVER":
+        draw_game_over_page()
+    pygame.display.flip()
+
+# Main Game Loop
+def game_loop(client_socket):
+    global xOne, yOne, xTwo, yTwo, lasers, alien_positions, alien_spawn_timer, key_states, scores, viewPage, game_over
+    screen = setup_pygame()
+    clock = pygame.time.Clock()
+
+    while True:
+        current_time = pygame.time.get_ticks()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
+            elif event.type == pygame.KEYDOWN:
+                if viewPage == "START" and event.key == pygame.K_RETURN:
+                    viewPage = "GAME"
+                    viewPage = "GAME"
+                elif viewPage == "GAME_OVER" and event.key == pygame.K_r:
+                    # Reset game state
+                    xOne, yOne = -400, -300
+                    xTwo, yTwo = 400, -300
+                    lasers = []
+                    alien_positions = []
+                    scores = {"Player 1": 0, "Player 2": 0}
+                    game_over = False
+                    viewPage = "START"
+                    # Reset game state
+                    xOne, yOne = -400, -300
+                    xTwo, yTwo = 400, -300
+                    lasers = []
+                    alien_positions = []
+                    scores = {"Player 1": 0, "Player 2": 0}
+                    game_over = False
+                    viewPage = "START"
+                if event.key in key_states:
+                    key_states[event.key] = True
+                if event.key == pygame.K_SPACE and viewPage == "GAME":
+                    lasers.append((xOne, yOne + 30))  # Fire laser from Player 1
+                    log_event("Player 1 fired a laser")
+            elif event.type == pygame.KEYUP:
+                if event.key in key_states:
+                    key_states[event.key] = False
+
+        if viewPage == "GAME" and not game_over:
+            # Update player positions based on key states
+            if key_states[K_w]:
+                yOne += SPACESHIP_SPEED
+            if key_states[K_s]:
+                yOne -= SPACESHIP_SPEED
+            if key_states[K_a]:
+                xOne -= SPACESHIP_SPEED
+            if key_states[K_d]:
+                xOne += SPACESHIP_SPEED
+
+            # Computer player 2 logic if no client connected
+            if client_socket is None:
+                # Computer Player 2: Rule-based decision making
+                if abs(yTwo - yOne) > 5:
+                    if yTwo < yOne:
+                        yTwo += SPACESHIP_SPEED // 2
+                    elif yTwo > yOne:
+                        yTwo -= SPACESHIP_SPEED // 2
+                if abs(xTwo - xOne) > 5:
+                    if xTwo < xOne:
+                        xTwo += SPACESHIP_SPEED // 2
+                    elif xTwo > xOne:
+                        xTwo -= SPACESHIP_SPEED // 2
+
+                # Dodge incoming lasers
+                for laser in lasers:
+                    laser_x, laser_y = laser
+                    if abs(laser_x - xTwo) < 30 and laser_y < yTwo:
+                        if random.choice([True, False]):
+                            xTwo += SPACESHIP_SPEED // 2
+                        else:
+                            xTwo -= SPACESHIP_SPEED // 2
+
+                # Fire laser at random intervals
+                if random.random() < 0.02:
+                    lasers.append((xTwo, yTwo + 30))  # Fire laser from Player 2
+                    log_event("Player 2 fired a laser")  # Fire laser from Player 2
+                    scores["Player 2"] += 1
+                    log_event("Player 2 fired a laser")
+
+            # Update laser positions and check for collisions with aliens
+            updated_lasers = []
+            for laser in lasers:
+                x, y = laser
+                y += LASER_SPEED
+                if y < YMAX // 2:
+                    updated_lasers.append((x, y))
+                    # Check for collision with aliens
+                    for alien in alien_positions:
+                        alien_x, alien_y = alien
+                        if alien_x - 15 < x < alien_x + 15 and alien_y - 15 < y < alien_y + 15:
+                            alien_positions.remove(alien)
+                            if x == xOne:
+                                scores["Player 1"] += 10
+                                log_event("Alien destroyed by Player 1")
+                            else:
+                                scores["Player 2"] += 10
+                                log_event("Alien destroyed by Player 2")
+            lasers = updated_lasers
+
+            # Spawn aliens periodically
+            if current_time - alien_spawn_timer > alien_spawn_interval:
+                alien_positions.append((random.randint(-XMAX // 2, XMAX // 2), YMAX // 2))
+                alien_spawn_timer = current_time
+
+            # Move aliens
+            alien_positions = [(x, y - ALIEN_SPEED) for (x, y) in alien_positions if y > -YMAX // 2]
+
+            # Check for collisions between aliens and player
+            for alien in alien_positions:
+                alien_x, alien_y = alien
+                if alien_x - 20 < xOne < alien_x + 20 and alien_y - 20 < yOne < alien_y + 20:
+                    viewPage = "GAME_OVER"
+                    log_event("Player 1 hit by alien. Game Over.")
+                    game_over = True
+
+            # Send player position to server if client_socket is available
+            if client_socket:
+                try:
+                    data = f"{xOne},{yOne},{xTwo},{yTwo}"
+                    encrypted_data = cipher_suite.encrypt(data.encode('utf-8'))
+                    client_socket.sendall(encrypted_data)
+                except (ConnectionAbortedError, ConnectionResetError, socket.timeout) as e:
+                    print(f"Connection error: {e}. Closing client socket.")
+                    client_socket.close()
+                    client_socket = None
+
+        # Update display
+        display(screen)
+        clock.tick(60)
+
+# Main Function
+def main(args):
+    global viewPage
     if args.mode == 'server':
         start_server()
     elif args.mode == 'client':
         server_ip = args.ip
         client_socket = connect_to_server(server_ip)
-        pygame.init()
-        global screen
-        screen = pygame.display.set_mode((XMAX, YMAX), DOUBLEBUF | OPENGL)
-        pygame.display.set_caption("Galactic Guardians")
-        gluOrtho2D(-XMAX//2, XMAX//2, -YMAX//2, YMAX//2)
-
-        while True:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    quit()
-                elif event.type == pygame.KEYDOWN:
-                    keyStates[chr(event.key)] = True
-                elif event.type == pygame.KEYUP:
-                    keyStates[chr(event.key)] = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    mButtonPressed = True
-                elif event.type == pygame.MOUSEBUTTONUP:
-                    mButtonPressed = False
-                elif event.type == pygame.MOUSEMOTION:
-                    mouseX, mouseY = event.pos
-
-            display()
-            data = f"{xOne},{yOne},{xTwo},{yTwo}"
-            encrypted_data = cipher_suite.encrypt(data.encode('utf-8'))
-            client_socket.sendall(encrypted_data)
+        game_loop(client_socket)
+    else:
+        viewPage = "START"
+        game_loop(None)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Galactic Guardians Game")
