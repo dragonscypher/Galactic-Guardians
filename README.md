@@ -1,79 +1,24 @@
-# 🌌 Galactic Guardians 🚀
+# Galactic Guardians
 
-Welcome to **Galactic Guardians**, an exciting multiplayer space shooter game! Whether you're playing solo or my ML model or with friends, defend the galaxy from alien invasions and aim for the highest score.
+A space shooter in a single Python file (`Galactic Guardians.py`). It has a server/client mode so friends on the same network can play together, and a log of game events that is chained with hashes like a small blockchain.
 
-## 📖 Storyline
+## What it does
 
-In the year 3050, the galaxy faces an unprecedented threat from alien forces. As a member of the elite Galactic Guardians, it's your mission to protect the galaxy and prove your skills in interstellar combat. Will you rise to the challenge and become the top Guardian?
+- Pygame window with PyOpenGL rendering for the ship, lasers and aliens.
+- Socket-based multiplayer: one player runs the server, others connect over the local network.
+- Encrypted traffic between players using the `cryptography` package.
+- Game events (lasers fired, aliens destroyed) written to a simple blockchain-style log so they cannot be edited quietly afterwards.
+- Single-player mode as well.
 
-## 🎮 Features
-
-- 🌐 **Multiplayer Mode**: Play with friends over a local Wi-Fi network or face the aliens alone.
-- 🖥️ **GUI Mode**: Enjoy the game with an engaging graphical interface using Pygame and OpenGL.
-- 🔗 **Blockchain Logging**: Securely log game events like laser fires and alien destructions using blockchain technology.
-- 🛡️ **Encrypted Communication**: Safe multiplayer interactions through encrypted data transmissions.
-- 🎨 **Immersive Graphics**: Experience stunning graphics, including spaceships, lasers, and aliens.
-
-## 🛠️ Tech Stack
-
-- **Python**: Core programming language
-- **Pygame**: For rendering graphics and handling game events
-- **PyOpenGL**: For OpenGL rendering
-- **Socket Programming**: For multiplayer networking
-- **Cryptography**: For secure communication
-- **Blockchain**: For logging game events
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-Ensure you have Python and pip installed. Then, install the required packages:
+## Running it
 
 ```bash
 pip install pygame PyOpenGL cryptography
+python "Galactic Guardians.py"
 ```
 
-## Running the Game
+Choose server or client mode when it starts. Clients need the server's local IP.
 
-### Server Mode
+## Why I built it
 
-Start the game in server mode:
-```bash
-python Galactic_Guardians.py --mode server
-```
-
-### Client Mode
-
-Connect to a server:
-```bash
-python Galactic_Guardians.py --mode client --ip <server_ip>
-```
-Replace `<server_ip>` with the actual IP address of the server.
-
-## 📚 Usage
-
-  Spaceship Controls:
-  
-  - Move Up: W
-  - Move Down: S
-  - Move Left: A
-  - Move Right: D
-  - Fire Laser: Space
-
-   
-   Game Objective:
-   
-   - Navigate your spaceship to avoid incoming attacks.
-   - Destroy enemy aliens and compete for the highest score.
-   - Play against a computer opponent or join with friends for multiplayer action.
-
-## Game Flow
-
-- **Start Screen**: Press **ENTER** to begin your adventure.
-- **Gameplay**: Control your spaceship, fire lasers, and avoid enemy attacks.
-- **Game Over**: When hit by an enemy, the game ends. Scores are displayed, and you can restart by pressing **R**.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
+A way to practise sockets, encryption and hash chaining in something more fun than an exercise.
